@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport без масштаба — чтобы выглядело как нативное приложение на телефоне -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <title>Дневник тренировок</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ================= ЭКРАН КАЛЕНДАРЯ ================= -->
+  <div id="screen-calendar" class="screen">
+    <header class="topbar">
+      <h1>Дневник тренировок</h1>
+      <div class="topbar-actions">
+        <button id="btn-progress" class="icon-btn" title="Прогресс">📈</button>
+        <button id="btn-export" class="icon-btn" title="Экспорт в текстовый файл">📤</button>
+        <button id="btn-settings" class="icon-btn" title="Настройки и резервная копия">⚙️</button>
+      </div>
+    </header>
+
+    <div class="cal-nav">
+      <button id="cal-prev" class="icon-btn">‹</button>
+      <h2 id="cal-title"></h2>
+      <button id="cal-next" class="icon-btn">›</button>
+    </div>
+
+    <button id="btn-today" class="btn-today">⤵ Перейти к сегодняшнему дню</button>
+
+    <div class="cal-weekdays">
+      <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span>
+      <span>Пт</span><span>Сб</span><span>Вс</span>
+    </div>
+    <div id="cal-grid" class="cal-grid"></div>
+
+    <p class="hint">Дни с точкой — есть тренировка. Нажми на любой день, чтобы записать упражнения.</p>
+  </div>
+
+  <!-- ================= ЭКРАН ДНЯ ================= -->
+  <div id="screen-day" class="screen" hidden>
+    <header class="topbar">
+      <button id="btn-back" class="icon-btn" title="Назад к календарю">←</button>
+      <h2 id="day-title"></h2>
+      <button id="btn-export-day" class="icon-btn" title="Экспорт дня в текстовый файл">📤</button>
+    </header>
+
+    <div id="ex-list"></div>
+
+    <p id="day-empty" class="hint" hidden>
+      Пока ничего нет. Добавь первое упражнение ниже 👇
+    </p>
+
+    <div class="note-box">
+      <label for="day-note">📝 Заметка к дню (попадёт в экспорт)</label>
+      <textarea id="day-note" rows="2" placeholder="Самочувствие, схема, ошибки техники…"></textarea>
+    </div>
+
+    <div class="add-ex">
+      <!-- выпадающий список ранее введённых упражнений -->
+      <select id="ex-select"></select>
+      <!-- поле для своего названия (появляется вместо списка) -->
+      <input id="new-ex-name" placeholder="Название упражнения" autocomplete="off" hidden>
+      <button id="btn-cancel-new" class="icon-btn" hidden title="Вернуться к списку">✕</button>
+      <button id="btn-add-ex">＋</button>
+    </div>
+  </div>
+
+  <!-- ================= ЭКРАН ПРОГРЕССА ================= -->
+  <div id="screen-progress" class="screen" hidden>
+    <header class="topbar">
+      <button id="btn-progress-back" class="icon-btn" title="Назад к календарю">←</button>
+      <h2>Прогресс</h2>
+    </header>
+
+    <!-- быстрые кнопки периода -->
+    <div class="chips">
+      <button class="chip" data-months="1">Месяц</button>
+      <button class="chip" data-months="3">3 месяца</button>
+      <button class="chip" data-months="6">Полгода</button>
+      <button class="chip" data-months="12">Год</button>
+      <button class="chip" data-months="all">Всё</button>
+    </div>
+
+    <!-- свои даты -->
+    <div class="period-custom">
+      <input type="date" id="progress-from" class="modal-input">
+      <span>—</span>
+      <input type="date" id="progress-to" class="modal-input">
+    </div>
+
+    <p id="progress-summary" class="hint"></p>
+    <div id="progress-list"></div>
+  </div>
+
+  <!-- ================= МОДАЛКА ЭКСПОРТА TXT ================= -->
+  <div id="modal-export" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h3>Экспорт тренировок</h3>
+
+      <label class="radio-row">
+        <input type="radio" name="export-mode" value="day" checked>
+        <span>Один день</span>
+        <input type="date" id="export-day-date" class="modal-input">
+      </label>
+
+      <label class="radio-row">
+        <input type="radio" name="export-mode" value="month">
+        <span>Месяц</span>
+        <input type="month" id="export-month" class="modal-input">
+      </label>
+
+      <label class="radio-row">
+        <input type="radio" name="export-mode" value="period">
+        <span>Период</span>
+      </label>
+      <div class="period-row">
+        <input type="date" id="export-from" class="modal-input">
+        <span>—</span>
+        <input type="date" id="export-to" class="modal-input">
+      </div>
+
+      <div class="modal-actions">
+        <button id="export-cancel" class="btn-secondary btn-inline">Отмена</button>
+        <button id="export-copy" class="btn-secondary btn-inline">📋 В буфер</button>
+        <button id="export-download" class="btn-primary btn-inline">⬇ .txt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= МОДАЛКА НАСТРОЕК ================= -->
+  <div id="modal-settings" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h3>Настройки</h3>
+
+      <p class="modal-label">Мой список упражнений (по одному в строке).<br>Этот список показывается в выпадающем меню.</p>
+      <textarea id="ex-list-editor" rows="6" spellcheck="false"></textarea>
+      <button id="btn-save-exlist" class="btn-secondary">Сохранить список</button>
+
+      <hr>
+
+      <p class="modal-label">Резервная копия (все данные одним файлом).</p>
+      <button id="btn-backup-export" class="btn-secondary">⬇️ Скачать копию (JSON)</button>
+      <button id="btn-backup-import" class="btn-secondary">⬆️ Восстановить из файла</button>
+      <input type="file" id="backup-file" accept=".json,application/json" hidden>
+
+      <hr>
+
+      <button id="btn-clear-all" class="btn-danger">🗑 Удалить все данные</button>
+
+      <div class="modal-actions">
+        <button id="settings-close" class="btn-primary">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

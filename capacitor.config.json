@@ -1,0 +1,11 @@
+{
+  "appId": "ru.gymlog.app",
+  "appName": "Дневник тренировок",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#0f172a"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,0 +1,6 @@
+# создаётся сборщиком в облаке — коммитить не нужно
+node_modules/
+android/
+www/
+dist/
+.gh_token
