@@ -46,6 +46,18 @@ jobs:
       - name: Генерация Android-проекта
         run: npx cap add android && npx cap sync android
 
+      # известная проблема: старые kotlin-stdlib-jdk7/jdk8 дублируют классы
+      # из новой kotlin-stdlib (1.8+) — исключаем старые модули
+      - name: Фикс дубликатов kotlin
+        run: |
+          cat >> android/app/build.gradle << 'EOF'
+
+          configurations.all {
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+              exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+          }
+          EOF
+
       - name: Ключ подписи
         run: |
           if [ -f keystore.b64 ]; then
