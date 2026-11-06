@@ -412,3 +412,104 @@ textarea#ex-list-editor {
   font: inherit;
   margin-bottom: 8px;
 }
+
+/* ---------- Панель переноса прошлой тренировки ---------- */
+.copy-bar {
+  margin: 12px 12px 0;
+  padding: 10px;
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-copy-last {
+  background: var(--accent);
+  color: #052e16;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-copy-last:active { background: var(--accent-dark); }
+
+.copy-select-row {
+  display: flex;
+  gap: 6px;
+}
+
+.copy-select-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px;
+  font-size: 13px;
+  color-scheme: dark;
+}
+
+.btn-copy-selected {
+  background: var(--card-hover);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-copy-selected:active { background: var(--accent); color: #052e16; }
+
+/* ---------- Сетка кнопок бэкапа в настройках ---------- */
+.backup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.backup-grid .btn-secondary {
+  margin-bottom: 0;
+  text-align: center;
+  font-size: 14px;
+  padding: 10px 8px;
+}
+
+textarea#backup-json-area {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 10px;
+  font-family: monospace;
+  font-size: 12px;
+  margin-bottom: 8px;
+  resize: vertical;
+}
+
+/* ---------- Выпадающий список в шапке карточки упражнения ---------- */
+.ex-name-select {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+  padding: 4px 2px;
+  min-width: 0;
+  color-scheme: dark;
+  cursor: pointer;
+}
+.ex-name-select:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}

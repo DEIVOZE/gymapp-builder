@@ -2,7 +2,6 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <!-- viewport без масштаба — чтобы выглядело как нативное приложение на телефоне -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#0f172a">
   <link rel="manifest" href="manifest.webmanifest">
@@ -49,10 +48,19 @@
       <button id="btn-export-day" class="icon-btn" title="Экспорт дня в текстовый файл">📤</button>
     </header>
 
+    <!-- Блок быстрого переноса прошлой тренировки -->
+    <div id="copy-workout-bar" class="copy-bar" hidden>
+      <button id="btn-copy-last" class="btn-copy-last">⚡ Повторить прошлую</button>
+      <div class="copy-select-row">
+        <select id="copy-source-select"></select>
+        <button id="btn-copy-selected" class="btn-copy-selected" title="Скопировать выбранную">Перенести</button>
+      </div>
+    </div>
+
     <div id="ex-list"></div>
 
     <p id="day-empty" class="hint" hidden>
-      Пока ничего нет. Добавь первое упражнение ниже 👇
+      Пока ничего нет. Добавь упражнение ниже или перенеси прошлую тренировку 👆
     </p>
 
     <div class="note-box">
@@ -61,9 +69,7 @@
     </div>
 
     <div class="add-ex">
-      <!-- выпадающий список ранее введённых упражнений -->
       <select id="ex-select"></select>
-      <!-- поле для своего названия (появляется вместо списка) -->
       <input id="new-ex-name" placeholder="Название упражнения" autocomplete="off" hidden>
       <button id="btn-cancel-new" class="icon-btn" hidden title="Вернуться к списку">✕</button>
       <button id="btn-add-ex">＋</button>
@@ -77,7 +83,6 @@
       <h2>Прогресс</h2>
     </header>
 
-    <!-- быстрые кнопки периода -->
     <div class="chips">
       <button class="chip" data-months="1">Месяц</button>
       <button class="chip" data-months="3">3 месяца</button>
@@ -86,7 +91,6 @@
       <button class="chip" data-months="all">Всё</button>
     </div>
 
-    <!-- свои даты -->
     <div class="period-custom">
       <input type="date" id="progress-from" class="modal-input">
       <span>—</span>
@@ -127,7 +131,7 @@
       <div class="modal-actions">
         <button id="export-cancel" class="btn-secondary btn-inline">Отмена</button>
         <button id="export-copy" class="btn-secondary btn-inline">📋 В буфер</button>
-        <button id="export-download" class="btn-primary btn-inline">⬇ .txt</button>
+        <button id="export-download" class="btn-primary btn-inline">📤 Файл / Поделиться</button>
       </div>
     </div>
   </div>
@@ -137,16 +141,26 @@
     <div class="modal">
       <h3>Настройки</h3>
 
-      <p class="modal-label">Мой список упражнений (по одному в строке).<br>Этот список показывается в выпадающем меню.</p>
-      <textarea id="ex-list-editor" rows="6" spellcheck="false"></textarea>
-      <button id="btn-save-exlist" class="btn-secondary">Сохранить список</button>
+      <p class="modal-label">Мой список упражнений (по одному в строке):</p>
+      <textarea id="ex-list-editor" rows="5" spellcheck="false"></textarea>
+      <button id="btn-save-exlist" class="btn-secondary">💾 Сохранить список</button>
 
       <hr>
 
-      <p class="modal-label">Резервная копия (все данные одним файлом).</p>
-      <button id="btn-backup-export" class="btn-secondary">⬇️ Скачать копию (JSON)</button>
-      <button id="btn-backup-import" class="btn-secondary">⬆️ Восстановить из файла</button>
-      <input type="file" id="backup-file" accept=".json,application/json" hidden>
+      <p class="modal-label">Резервная копия (JSON):</p>
+      <div class="backup-grid">
+        <button id="btn-backup-copy" class="btn-secondary">📋 Скопировать JSON</button>
+        <button id="btn-backup-export" class="btn-secondary">📤 Поделиться файлом</button>
+      </div>
+
+      <p class="modal-label" style="margin-top: 8px;">Восстановление (вставь JSON-код ниже или выбери файл):</p>
+      <textarea id="backup-json-area" rows="4" placeholder='{"workouts": ...}' spellcheck="false"></textarea>
+      <div class="backup-grid">
+        <button id="btn-backup-paste-restore" class="btn-secondary">📥 Восстановить из текста</button>
+        <button id="btn-backup-import" class="btn-secondary">📂 Выбрать файл</button>
+      </div>
+      <!-- Убран жесткий фильтр .json, чтобы Android не блокировал выбор файла -->
+      <input type="file" id="backup-file" accept="*/*" hidden>
 
       <hr>
 

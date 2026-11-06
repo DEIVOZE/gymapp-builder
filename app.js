@@ -1,50 +1,21 @@
 'use strict';
 
-/* =====================================================
-   ДНЕВНИК ТРЕНИРОВОК — вся логика приложения.
-
-   Как устроено (кратко):
-   1. ХРАНИЛИЩЕ   — все данные в localStorage телефона,
-                    в виде одного JSON-объекта `state`.
-   2. ДАТЫ        — маленькие помощники для работы с датами.
-   3. КАЛЕНДАРЬ   — сетка месяца, точка на днях с тренировками,
-                    кнопка перехода к сегодняшнему дню.
-   4. ЭКРАН ДНЯ   — упражнения (выпадающий список или своё
-                    название), подходы со стрелками ±, заметка дня.
-   5. ЭКСПОРТ     — текст отчёта, скачивание .txt и копирование
-                    в буфер обмена.
-   6. БЭКАП JSON  — сохранение и восстановление всех данных.
-   7. ПРОГРЕСС    — сравнение первой и последней тренировки
-                    каждого упражнения за выбранный период.
-   8. МОДАЛКИ     — все обработчики кнопок в одном месте.
-   9. PWA         — регистрация service worker'а (офлайн-режим).
-   ===================================================== */
-
-
 /* ---------- 1. ХРАНИЛИЩЕ ---------- */
 
-const STORAGE_KEY = 'gymlog_v1'; // имя ключа в localStorage
-
-// Структура данных:
-// state = {
-//   workouts: {
-//     '2026-10-26': {
-//       note: 'выспался, техника норм',     // заметка дня (может не быть)
-//       exercises: [
-//         { name: 'Жим лёжа',
-//           sets: [ { weight: 80, reps: 8, rir: 2 }, ... ] }
-//       ]
-//     }
-//   },
-//   exercises: ['Жим лёжа', 'Приседания', ...]  // список для выпадающего меню
-// }
+const STORAGE_KEY = 'gymlog_v1';
 
 let state = loadState();
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        workouts: parsed.workouts || {},
+        exercises: Array.isArray(parsed.exercises) ? parsed.exercises : []
+      };
+    }
   } catch (e) {
     console.error('Не удалось прочитать сохранённые данные:', e);
   }
@@ -55,25 +26,21 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-// Вернуть (или создать) объект тренировки за дату ISO '2026-10-26'
 function getWorkout(iso) {
   if (!state.workouts[iso]) state.workouts[iso] = { exercises: [] };
   return state.workouts[iso];
 }
 
-// Сокращение для document.querySelector
 function $(sel) { return document.querySelector(sel); }
 
 
 /* ---------- 2. ДАТЫ ---------- */
 
-// Date -> '2026-10-26' (такой формат — ключ в workouts и value у <input type=date>)
 function toISO(d) {
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-// '2026-10-26' -> Date (new Date(строку) не используем: он парсит её как UTC)
 function fromISO(s) {
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, m - 1, d);
@@ -83,7 +50,6 @@ function todayISO() {
   return toISO(new Date());
 }
 
-// '2026-10-26' -> '26.10.2026'
 function formatDots(iso) {
   return iso.split('-').reverse().join('.');
 }
@@ -92,26 +58,23 @@ const MONTHS = ['января','февраля','марта','апреля','м�
                 'июля','августа','сентября','октября','ноября','декабря'];
 const WEEKDAYS = ['воскресенье','понедельник','вторник','среда',
                   'четверг','пятница','суббота'];
+const WEEKDAYS_SHORT = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 
-// '2026-10-26' -> '26 октября 2026, понедельник'
 function formatDateRu(iso) {
   const d = fromISO(iso);
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${WEEKDAYS[d.getDay()]}`;
 }
 
-// '2026-10' -> 'Октябрь 2026' (заголовок календаря)
 function monthTitle(year, month) {
   const names = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   return `${names[month]} ${year}`;
 }
 
-// Последний день месяца: берём 0-й день следующего месяца
 function daysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
 
-// Дата ровно N месяцев назад (для кнопок периода на странице прогресса)
 function monthsAgoISO(n) {
   const now = new Date();
   return toISO(new Date(now.getFullYear(), now.getMonth() - n, now.getDate()));
@@ -120,13 +83,13 @@ function monthsAgoISO(n) {
 
 /* ---------- 3. КАЛЕНДАРЬ ---------- */
 
-let calYear, calMonth;          // какой месяц открыт на экране
-let selectedDate = todayISO();  // какой день открыт на экране дня
+let calYear, calMonth;
+let selectedDate = todayISO();
 
 function initCalendar() {
   const now = new Date();
   calYear = now.getFullYear();
-  calMonth = now.getMonth(); // 0 = январь
+  calMonth = now.getMonth();
 }
 
 function renderCalendar() {
@@ -136,12 +99,12 @@ function renderCalendar() {
   grid.innerHTML = '';
 
   const first = new Date(calYear, calMonth, 1);
-  const offset = (first.getDay() + 6) % 7; // сдвиг: понедельник = 0
+  const offset = (first.getDay() + 6) % 7;
   const total = daysInMonth(calYear, calMonth);
   const today = todayISO();
 
   for (let i = 0; i < offset; i++) {
-    grid.appendChild(document.createElement('div')); // пустые клетки до 1-го числа
+    grid.appendChild(document.createElement('div'));
   }
 
   for (let day = 1; day <= total; day++) {
@@ -152,7 +115,7 @@ function renderCalendar() {
     if (iso === today) btn.classList.add('today');
 
     const workout = state.workouts[iso];
-    if (workout && workout.exercises.length > 0) {
+    if (workout && workout.exercises && workout.exercises.length > 0) {
       btn.classList.add('has-workout');
       const dot = document.createElement('span');
       dot.className = 'dot';
@@ -180,24 +143,119 @@ function showScreen(name) {
 }
 
 
-/* ---------- 4. ЭКРАН ДНЯ ---------- */
+/* ---------- 4. ЭКРАН ДНЯ И ПЕРЕНОС ТРЕНИРОВОК ---------- */
 
-// Шаг и стартовое значение для стрелок у полей подхода:
-// кг ± 2.5, повторения и RIR ± 1; при пустом поле — стартовое значение.
 const SET_FIELDS = [
   { key: 'weight', placeholder: 'кг',     step: 2.5, start: 20 },
   { key: 'reps',   placeholder: 'повт.',  step: 1,   start: 8 },
   { key: 'rir',    placeholder: 'RIR',    step: 1,   start: 2 },
 ];
 
+// Получить список всех дат с непустыми тренировками (от новых к старым), кроме текущего открытого дня
+function getPreviousWorkoutDates(excludeIso) {
+  return Object.keys(state.workouts)
+    .filter(iso => iso !== excludeIso && state.workouts[iso] && state.workouts[iso].exercises && state.workouts[iso].exercises.length > 0)
+    .sort((a, b) => (a < b ? 1 : -1));
+}
+
+// Найти ближайшую предыдущую тренировку строго до выбранной даты (или самую последнюю вообще)
+function getLastWorkoutBefore(targetIso) {
+  const allPrev = getPreviousWorkoutDates(targetIso);
+  const strictlyBefore = allPrev.filter(iso => iso < targetIso);
+  return strictlyBefore.length > 0 ? strictlyBefore[0] : (allPrev[0] || null);
+}
+
+// Скопировать упражнения и подходы из одного дня в текущий
+function copyWorkoutFrom(sourceIso) {
+  const src = state.workouts[sourceIso];
+  if (!src || !src.exercises || src.exercises.length === 0) {
+    alert('В выбранном дне нет упражнений для переноса.');
+    return;
+  }
+
+  const current = state.workouts[selectedDate];
+  const hasCurrent = current && current.exercises && current.exercises.length > 0;
+
+  let replace = true;
+  if (hasCurrent) {
+    replace = confirm(
+      `В текущем дне уже есть упражнения.\n\n` +
+      `Нажми «ОК», чтобы ДОБАВИТЬ упражнения из ${formatDots(sourceIso)} в конец списка.\n` +
+      `Нажми «Отмена», если передумал.`
+    );
+    if (!replace) return;
+  }
+
+  // Глубокая копия упражнений и подходов
+  const clonedExercises = src.exercises.map(ex => ({
+    name: ex.name,
+    sets: ex.sets.map(s => ({
+      weight: s.weight,
+      reps: s.reps,
+      rir: s.rir
+    }))
+  }));
+
+  const target = getWorkout(selectedDate);
+  if (hasCurrent) {
+    target.exercises.push(...clonedExercises);
+  } else {
+    target.exercises = clonedExercises;
+  }
+
+  // На всякий случай пополняем справочник упражнений
+  clonedExercises.forEach(ex => {
+    if (ex.name && !state.exercises.includes(ex.name)) {
+      state.exercises.push(ex.name);
+    }
+  });
+
+  saveState();
+  renderDay();
+  renderCalendar();
+}
+
+function renderCopyBar() {
+  const bar = $('#copy-workout-bar');
+  const prevDates = getPreviousWorkoutDates(selectedDate);
+
+  if (prevDates.length === 0) {
+    bar.hidden = true;
+    return;
+  }
+
+  bar.hidden = false;
+  const lastIso = getLastWorkoutBefore(selectedDate);
+  const lastBtn = $('#btn-copy-last');
+  if (lastIso) {
+    const exNames = state.workouts[lastIso].exercises.map(e => e.name).slice(0, 2).join(', ');
+    lastBtn.textContent = `⚡ Повторить прошлую (${formatDots(lastIso)}: ${exNames}…)`;
+    lastBtn.onclick = () => copyWorkoutFrom(lastIso);
+  }
+
+  const sel = $('#copy-source-select');
+  sel.innerHTML = '';
+  prevDates.slice(0, 25).forEach(iso => {
+    const opt = document.createElement('option');
+    opt.value = iso;
+    const d = fromISO(iso);
+    const dayShort = WEEKDAYS_SHORT[d.getDay()];
+    const exPreview = state.workouts[iso].exercises.map(e => e.name).join(', ');
+    opt.textContent = `${formatDots(iso)} (${dayShort}) — ${exPreview}`;
+    sel.appendChild(opt);
+  });
+}
+
 function renderDay() {
   $('#day-title').textContent = formatDateRu(selectedDate);
 
+  renderCopyBar();
+
   const workout = state.workouts[selectedDate];
   const list = $('#ex-list');
-  list.innerHTML = ''; // перерисовываем список с нуля
+  list.innerHTML = '';
 
-  const isEmpty = !workout || workout.exercises.length === 0;
+  const isEmpty = !workout || !workout.exercises || workout.exercises.length === 0;
   $('#day-empty').hidden = !isEmpty;
 
   $('#day-note').value = workout ? (workout.note || '') : '';
@@ -209,7 +267,6 @@ function renderDay() {
   });
 }
 
-// Заполнить выпадающий список упражнений
 function refreshExercisePicker() {
   const select = $('#ex-select');
   select.innerHTML = '';
@@ -232,7 +289,6 @@ function refreshExercisePicker() {
   select.appendChild(other);
 }
 
-// Переключение между «выбрать из списка» и «ввести своё»
 function switchExerciseMode(useFreeInput) {
   $('#ex-select').hidden = useFreeInput;
   $('#new-ex-name').hidden = !useFreeInput;
@@ -240,7 +296,6 @@ function switchExerciseMode(useFreeInput) {
   if (useFreeInput) $('#new-ex-name').focus();
 }
 
-// Добавление упражнения в день (из списка или своего названия)
 function addExercise() {
   let nameValue;
   if (!$('#new-ex-name').hidden) {
@@ -253,33 +308,109 @@ function addExercise() {
     return;
   }
   getWorkout(selectedDate).exercises.push({ name: nameValue, sets: [] });
-  // запоминаем название — теперь оно будет в выпадающем списке
   if (!state.exercises.includes(nameValue)) state.exercises.push(nameValue);
   saveState();
 
   $('#new-ex-name').value = '';
-  $('#ex-select').value = ''; // сброс выбора — после успешного добавления
+  $('#ex-select').value = '';
   switchExerciseMode(false);
   renderDay();
   renderCalendar();
 }
 
-// Собирает HTML-карточку одного упражнения вместе с обработчиками
+// Поиск последнего выполнения этого упражнения строго ДО выбранной даты (selectedDate)
+function findPreviousExerciseLog(exName, beforeIso) {
+  const target = (exName || '').trim().toLowerCase();
+  if (!target) return null;
+
+  const prevDates = Object.keys(state.workouts)
+    .filter(iso => iso < beforeIso)
+    .sort((a, b) => (a < b ? 1 : -1));
+
+  for (const iso of prevDates) {
+    const w = state.workouts[iso];
+    if (!w || !w.exercises) continue;
+    const found = w.exercises.find(
+      e => (e.name || '').trim().toLowerCase() === target && e.sets && e.sets.length > 0
+    );
+    if (found) {
+      return { iso, sets: found.sets };
+    }
+  }
+  return null;
+}
+
+// Форматирование прошлых подходов:
+// Если вес везде один — компактно: "80 кг × 10(RIR 2), 9(RIR 1), 8(RIR 0)"
+// Если вес разный — подробно: "75 кг×10(RIR 2) • 80 кг×8(RIR 1)"
+function formatPrevSets(sets) {
+  if (!sets || sets.length === 0) return '';
+
+  const firstWeight = sets[0].weight;
+  const allSameWeight =
+    firstWeight !== '' &&
+    sets.every(s => String(s.weight) === String(firstWeight));
+
+  if (allSameWeight && sets.length > 1) {
+    const repsList = sets.map(s => {
+      const r = s.reps !== '' ? s.reps : '—';
+      const rir = s.rir !== '' && s.rir !== undefined ? `(RIR ${s.rir})` : '';
+      return `${r}${rir}`;
+    }).join(', ');
+    return `<strong>${firstWeight} кг</strong> × ${repsList}`;
+  }
+
+  return sets.map(s => {
+    const w = s.weight !== '' ? `${s.weight} кг` : '—';
+    const r = s.reps !== '' ? s.reps : '—';
+    const rir = s.rir !== '' && s.rir !== undefined ? `(RIR ${s.rir})` : '';
+    return `${w}×${r}${rir}`;
+  }).join(' • ');
+}
+
 function buildExerciseCard(ex, exIndex) {
   const card = document.createElement('div');
   card.className = 'ex-card';
 
-  // --- шапка: редактируемое название + кнопка удаления ---
   const head = document.createElement('div');
   head.className = 'ex-head';
 
-  const name = document.createElement('input');
-  name.className = 'ex-name';
-  name.value = ex.name;
-  name.addEventListener('input', () => {
-    ex.name = name.value;
-    saveState();
-  });
+  // Выпадающий список для быстрой смены упражнения в любой момент
+  const nameSelect = document.createElement('select');
+  nameSelect.className = 'ex-name-select';
+
+  function populateNameSelect() {
+    nameSelect.innerHTML = '';
+    const allNames = [...state.exercises];
+    if (ex.name && !allNames.includes(ex.name)) {
+      allNames.unshift(ex.name);
+    }
+    allNames.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n;
+      opt.textContent = n;
+      if (n === ex.name) opt.selected = true;
+      nameSelect.appendChild(opt);
+    });
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = '✏️ Переименовать / Своё…';
+    nameSelect.appendChild(customOpt);
+  }
+  populateNameSelect();
+
+  // Поле для ручного переименования (появляется, если выбрали «✏️ Переименовать…»)
+  const nameInput = document.createElement('input');
+  nameInput.className = 'ex-name';
+  nameInput.value = ex.name;
+  nameInput.placeholder = 'Название упражнения';
+  nameInput.hidden = true;
+
+  const cancelRenameBtn = document.createElement('button');
+  cancelRenameBtn.className = 'set-del';
+  cancelRenameBtn.textContent = '✓';
+  cancelRenameBtn.title = 'Готово';
+  cancelRenameBtn.hidden = true;
 
   const delEx = document.createElement('button');
   delEx.className = 'set-del';
@@ -290,37 +421,135 @@ function buildExerciseCard(ex, exIndex) {
     state.workouts[selectedDate].exercises.splice(exIndex, 1);
     saveState();
     renderDay();
-    renderCalendar(); // возможно, день перестал иметь тренировку
+    renderCalendar();
   });
 
-  head.append(name, delEx);
+  head.append(nameSelect, nameInput, cancelRenameBtn, delEx);
   card.appendChild(head);
 
-  // --- заголовок колонок (над полями ввода) ---
+  // --- Блок подсказки прошлого результата ---
+  const prevHint = document.createElement('div');
+  prevHint.className = 'ex-prev-hint';
+
+  function updatePrevHint() {
+    const prev = findPreviousExerciseLog(ex.name, selectedDate);
+    if (!prev) {
+      prevHint.hidden = true;
+      prevHint.innerHTML = '';
+    } else {
+      prevHint.hidden = false;
+      prevHint.innerHTML = `В прошлый раз <strong>(${formatDots(prev.iso)})</strong>: ${formatPrevSets(prev.sets)}`;
+    }
+  }
+
+  updatePrevHint();
+  card.appendChild(prevHint);
+
+  // Обработка выбора другого упражнения из выпадающего списка
+  nameSelect.addEventListener('change', () => {
+    if (nameSelect.value === '__custom__') {
+      nameSelect.hidden = true;
+      nameInput.hidden = false;
+      cancelRenameBtn.hidden = false;
+      nameInput.value = ex.name;
+      nameInput.focus();
+      nameInput.select();
+      return;
+    }
+    ex.name = nameSelect.value;
+    saveState();
+    updatePrevHint();
+  });
+
+  // Завершение ручного переименования
+  function finishRename() {
+    const val = nameInput.value.trim();
+    if (val) {
+      ex.name = val;
+      if (!state.exercises.includes(val)) {
+        state.exercises.push(val);
+      }
+      saveState();
+      refreshExercisePicker();
+    }
+    populateNameSelect();
+    updatePrevHint();
+    nameInput.hidden = true;
+    cancelRenameBtn.hidden = true;
+    nameSelect.hidden = false;
+  }
+
+  cancelRenameBtn.addEventListener('click', finishRename);
+  nameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') finishRename();
+  });
+  nameInput.addEventListener('blur', () => {
+    // небольшая задержка, чтобы клик по кнопке ✓ не конфликтовал с blur
+    setTimeout(() => {
+      if (!nameInput.hidden) finishRename();
+    }, 150);
+  });
+
+  // --- Заголовок колонок ---
   const setHead = document.createElement('div');
   setHead.className = 'set-head';
-  // колонки: номер | − кг + | − повт. + | − RIR + | ✕
   setHead.innerHTML =
     '<span></span><span></span><span>кг</span><span></span>' +
     '<span></span><span>повт.</span><span></span>' +
     '<span></span><span>RIR</span><span></span><span></span>';
   card.appendChild(setHead);
 
-  // --- строки подходов ---
+  // --- Строки подходов ---
   ex.sets.forEach((set, setIndex) => {
     card.appendChild(buildSetRow(ex, set, setIndex));
   });
 
-  // --- кнопка «+ подход» (новый подход наследует значения последнего) ---
+  // --- Умная кнопка «+ подход» ---
   const addBtn = document.createElement('button');
   addBtn.className = 'add-set-btn';
   addBtn.textContent = '＋ подход';
   addBtn.addEventListener('click', () => {
-    const last = ex.sets[ex.sets.length - 1];
+    const newIndex = ex.sets.length; // индекс добавляемого подхода (0, 1, 2...)
+    const lastToday = ex.sets[ex.sets.length - 1];
+    const prev = findPreviousExerciseLog(ex.name, selectedDate);
+    const prevMatchingSet = prev && prev.sets[newIndex] ? prev.sets[newIndex] : null;
+    const prevPrevSet = prev && newIndex > 0 && prev.sets[newIndex - 1] ? prev.sets[newIndex - 1] : null;
+
+    let nextWeight = '';
+    let nextReps = '';
+    let nextRir = '';
+
+    if (newIndex === 0) {
+      // 1-й подход: берем 1-й подход из прошлой тренировки
+      if (prevMatchingSet) {
+        nextWeight = prevMatchingSet.weight;
+        nextReps = prevMatchingSet.reps;
+        nextRir = prevMatchingSet.rir;
+      }
+    } else if (prevMatchingSet && prevPrevSet) {
+      // Для 2-го, 3-го и т.д. подходов:
+      // Проверяем, менялся ли вес в прошлый раз между (N-1)-м и N-м подходом (пирамида / дроп-сет)
+      const weightChangedLastTime = String(prevMatchingSet.weight) !== String(prevPrevSet.weight);
+      if (weightChangedLastTime) {
+        // Если в прошлый раз менял вес во 2-м/3-м подходе — берем схему прошлого раза
+        nextWeight = prevMatchingSet.weight;
+      } else {
+        // Если в прошлый раз рабочий вес был ровный — сохраняем сегодняшний вес из предыдущего подхода
+        nextWeight = lastToday.weight;
+      }
+      nextReps = prevMatchingSet.reps !== '' ? prevMatchingSet.reps : lastToday.reps;
+      nextRir = prevMatchingSet.rir !== '' ? prevMatchingSet.rir : lastToday.rir;
+    } else if (lastToday) {
+      // Если в прошлый раз подходов было меньше, чем сегодня — просто копируем последний сегодняшний
+      nextWeight = lastToday.weight;
+      nextReps = lastToday.reps;
+      nextRir = lastToday.rir;
+    }
+
     ex.sets.push({
-      weight: last ? last.weight : '',
-      reps: last ? last.reps : '',
-      rir: last ? last.rir : '',
+      weight: nextWeight,
+      reps: nextReps,
+      rir: nextRir,
     });
     saveState();
     renderDay();
@@ -330,8 +559,6 @@ function buildExerciseCard(ex, exIndex) {
   return card;
 }
 
-// Изменить значение поля стрелкой на шаг (с округлением до 0.01,
-// чтобы не оставалось хвостов вроде 82.50000000000001)
 function stepValue(set, field, dir, input) {
   let v = set[field.key] === '' ? field.start : Number(set[field.key]);
   v = Math.round((v + dir * field.step) * 100) / 100;
@@ -341,7 +568,6 @@ function stepValue(set, field, dir, input) {
   saveState();
 }
 
-// Одна строка подхода: номер, три поля со стрелками ±, кнопка удаления
 function buildSetRow(ex, set, setIndex) {
   const row = document.createElement('div');
   row.className = 'set-row';
@@ -371,7 +597,6 @@ function buildSetRow(ex, set, setIndex) {
     minus.addEventListener('click', () => stepValue(set, field, -1, input));
     plus.addEventListener('click', () => stepValue(set, field, +1, input));
 
-    // правка руками тоже работает: каждое изменение сразу пишем в state
     input.addEventListener('input', () => {
       set[field.key] = input.value === '' ? '' : Number(input.value);
       saveState();
@@ -393,9 +618,8 @@ function buildSetRow(ex, set, setIndex) {
 }
 
 
-/* ---------- 5. ЭКСПОРТ ---------- */
+/* ---------- 5. ЭКСПОРТ И ФАЙЛЫ (С ПОДДЕРЖКОЙ ANDROID APK) ---------- */
 
-// Собрать текстовый отчёт по списку дат ISO (внутри — сортировка)
 function buildExportText(dates) {
   dates = [...dates].sort();
 
@@ -409,7 +633,7 @@ function buildExportText(dates) {
 
   for (const iso of dates) {
     const workout = state.workouts[iso];
-    if (!workout || workout.exercises.length === 0) continue;
+    if (!workout || !workout.exercises || workout.exercises.length === 0) continue;
     workoutsCount++;
 
     lines.push(``, `═══ ${formatDateRu(iso)} ═══`);
@@ -435,7 +659,6 @@ function buildExportText(dates) {
   return lines.join('\n');
 }
 
-// Прочитать форму модалки экспорта и вернуть список дат (или null с alert'ом)
 function collectExportDates() {
   const mode = document.querySelector('input[name="export-mode"]:checked').value;
 
@@ -450,15 +673,12 @@ function collectExportDates() {
     }
     return dates;
   }
-  // период
   const from = $('#export-from').value;
   const to = $('#export-to').value;
   if (!from || !to) {
     alert('Выбери обе даты периода');
     return null;
   }
-  // берём все даты между from и to включительно
-  // (если пользователь перепутал порядок — меняем местами)
   let [a, b] = [fromISO(from), fromISO(to)];
   if (a > b) [a, b] = [b, a];
   const dates = [];
@@ -468,31 +688,74 @@ function collectExportDates() {
   return dates;
 }
 
-// Скачать текст как файл (Blob -> временная ссылка -> клик)
-function downloadFile(filename, text, mime) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+// Умное сохранение файла: Web Share API для APK/телефона + fallback на скачивание или буфер
+async function shareOrDownloadFile(filename, text, mime) {
+  // 1. Пробуем системное меню «Поделиться файлом» (отлично работает на Android)
+  try {
+    if (navigator.canShare && typeof File !== 'undefined') {
+      const file = new File([text], filename, { type: mime });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: filename,
+          files: [file]
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return; // пользователь сам закрыл шторку «Поделиться»
+    console.warn('Share File не сработал, пробуем дальше:', err);
+  }
+
+  // 2. Если мы в APK (Capacitor) и шаринг файлом не поддерживается — шарим как текст
+  if (window.Capacitor && navigator.share) {
+    try {
+      await navigator.share({ title: filename, text: text });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+  }
+
+  // 3. Классическое скачивание для браузера + страховка копированием в буфер
+  try {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+    // Если это внутри APK, обычный <a download> может молча проигнорироваться WebView,
+    // поэтому дублируем в буфер обмена и предупреждаем
+    if (window.Capacitor) {
+      await copyToClipboard(text);
+      alert('В APK прямая загрузка может блокироваться системой, поэтому данные также скопированы в буфер обмена 📋');
+    }
+  } catch (e) {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      alert('Не удалось сохранить файлом, но данные скопированы в буфер обмена 📋');
+    } else {
+      alert('Ошибка при сохранении: ' + e.message);
+    }
+  }
 }
 
-// Копирование в буфер обмена (с запасным способом на случай запретов)
 async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch (e) {
-    // запасной путь: невидимое текстовое поле + старая команда копирования
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
+    ta.focus();
     ta.select();
     const ok = document.execCommand('copy');
     ta.remove();
@@ -500,12 +763,15 @@ async function copyToClipboard(text) {
   }
 }
 
-function doExportDownload() {
+async function doExportDownload() {
   const dates = collectExportDates();
   if (!dates) return;
   const text = buildExportText(dates);
-  downloadFile(`trenirovki_${formatDots(dates[0])}_${formatDots(dates[dates.length - 1])}.txt`,
-               text, 'text/plain;charset=utf-8');
+  await shareOrDownloadFile(
+    `trenirovki_${formatDots(dates[0])}_${formatDots(dates[dates.length - 1])}.txt`,
+    text,
+    'text/plain;charset=utf-8'
+  );
   $('#modal-export').hidden = true;
 }
 
@@ -515,37 +781,69 @@ async function doExportCopy() {
   const ok = await copyToClipboard(buildExportText(dates));
   if (ok) {
     $('#modal-export').hidden = true;
-    alert('Скопировано в буфер обмена ✔');
+    alert('Отчёт скопирован в буфер обмена ✔');
   } else {
-    alert('Не удалось скопировать — попробуй скачать файлом');
+    alert('Не удалось скопировать');
   }
 }
 
 
 /* ---------- 6. РЕЗЕРВНАЯ КОПИЯ (JSON) ---------- */
 
-function backupExport() {
-  const text = JSON.stringify(state, null, 2);
-  downloadFile(`gymlog_backup_${todayISO()}.json`, text, 'application/json');
+function getBackupJsonString() {
+  return JSON.stringify(state, null, 2);
 }
 
-function backupImport(file) {
+async function backupExportFile() {
+  const text = getBackupJsonString();
+  $('#backup-json-area').value = text;
+  await shareOrDownloadFile(`gymlog_backup_${todayISO()}.json`, text, 'application/json');
+}
+
+async function backupCopyClipboard() {
+  const text = getBackupJsonString();
+  $('#backup-json-area').value = text;
+  const ok = await copyToClipboard(text);
+  if (ok) {
+    alert('JSON-код резервной копии скопирован в буфер обмена ✔\nМожешь сохранить его в Заметки или Избранное в Telegram.');
+  } else {
+    alert('Не удалось скопировать автоматически — скопируй текст из поля ниже вручную.');
+  }
+}
+
+function restoreFromJsonString(rawJson) {
+  try {
+    const clean = (rawJson || '').trim();
+    if (!clean) {
+      alert('Сначала вставь JSON-код резервной копии в текстовое поле!');
+      return;
+    }
+    const data = JSON.parse(clean);
+    if (!data || typeof data !== 'object' || !('workouts' in data) || typeof data.workouts !== 'object') {
+      throw new Error('в JSON нет объекта workouts');
+    }
+    if (!confirm('Заменить все текущие данные данными из резервной копии?')) return;
+
+    state = {
+      workouts: data.workouts || {},
+      exercises: Array.isArray(data.exercises) ? data.exercises : []
+    };
+    saveState();
+    showScreen('calendar');
+    $('#modal-settings').hidden = true;
+    alert('Данные успешно восстановлены ✔');
+  } catch (e) {
+    alert('Ошибка формата JSON: ' + e.message);
+  }
+}
+
+function backupImportFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      const data = JSON.parse(reader.result);
-      if (!data || typeof data !== 'object' || !('workouts' in data)) {
-        throw new Error('неверный формат файла');
-      }
-      if (!confirm('Заменить все текущие данные данными из файла?')) return;
-      state = data;
-      saveState();
-      showScreen('calendar');
-      $('#modal-settings').hidden = true;
-      alert('Данные восстановлены!');
-    } catch (e) {
-      alert('Не получилось прочитать файл: ' + e.message);
-    }
+    restoreFromJsonString(reader.result);
+  };
+  reader.onerror = () => {
+    alert('Не удалось прочитать выбранный файл.');
   };
   reader.readAsText(file, 'utf-8');
 }
@@ -553,7 +851,6 @@ function backupImport(file) {
 
 /* ---------- 7. ПРОГРЕСС ---------- */
 
-// Лучший подход упражнения: максимальный вес, при равном весе — больше повторений
 function bestSet(sets) {
   let best = null;
   for (const s of sets) {
@@ -568,7 +865,6 @@ function bestSet(sets) {
   return best;
 }
 
-// Применить одну из быстрых кнопок периода ("месяц", "год", "всё"…)
 function setProgressPeriod(months) {
   const to = todayISO();
   const from = months === 'all' ? '0000-01-01' : monthsAgoISO(Number(months));
@@ -585,17 +881,15 @@ function renderProgress() {
   list.innerHTML = '';
   if (!from || !to) return;
 
-  // даты в формате 'ГГГГ-ММ-ДД' можно сравнивать как обычные строки
   const dates = Object.keys(state.workouts)
     .filter(iso => iso >= from && iso <= to)
     .sort();
 
-  // имя упражнения -> список его тренировок в периоде (с лучшим подходом)
   const byEx = {};
   let workoutsCount = 0;
   for (const iso of dates) {
     const w = state.workouts[iso];
-    if (!w.exercises.length) continue;
+    if (!w || !w.exercises || !w.exercises.length) continue;
     workoutsCount++;
     for (const ex of w.exercises) {
       const best = bestSet(ex.sets);
@@ -618,7 +912,7 @@ function renderProgress() {
 
   const names = Object.keys(byEx).sort();
   for (const name of names) {
-    const occ = byEx[name]; // тренировки упражнения по порядку
+    const occ = byEx[name];
     const card = document.createElement('div');
     card.className = 'progress-card';
 
@@ -640,8 +934,8 @@ function renderProgress() {
       const s = occ[0].set;
       line.textContent = `мало данных: ${s.weight !== '' ? s.weight + ' кг' : '—'} × ${s.reps !== '' ? s.reps : '—'}`;
     } else {
-      const a = occ[0].set;              // первая тренировка упражнения
-      const b = occ[occ.length - 1].set; // последняя
+      const a = occ[0].set;
+      const b = occ[occ.length - 1].set;
       const w1 = Number(a.weight) || 0;
       const w2 = Number(b.weight) || 0;
       const r1 = Number(a.reps) || 0;
@@ -674,7 +968,6 @@ function renderProgress() {
 /* ---------- 8. МОДАЛКИ И КНОПКИ ---------- */
 
 function openExportModal(presetDay) {
-  // значения по умолчанию: открытый день / открытый месяц / текущий месяц
   $('#export-day-date').value = selectedDate;
   $('#export-month').value =
     `${calYear}-${String(calMonth + 1).padStart(2, '0')}`;
@@ -690,6 +983,7 @@ function openExportModal(presetDay) {
 
 function openSettingsModal() {
   $('#ex-list-editor').value = state.exercises.join('\n');
+  $('#backup-json-area').value = '';
   $('#modal-settings').hidden = false;
 }
 
@@ -705,7 +999,6 @@ function bindEvents() {
     if (calMonth > 11) { calMonth = 0; calYear++; }
     renderCalendar();
   });
-  // быстрый переход к сегодняшнему дню
   $('#btn-today').addEventListener('click', () => {
     const now = new Date();
     calYear = now.getFullYear();
@@ -721,13 +1014,16 @@ function bindEvents() {
     if (e.key === 'Enter') addExercise();
   });
   $('#ex-select').addEventListener('change', e => {
-    // «➕ Другое упражнение…» переключает на ручной ввод,
-    // обычный выбор просто остаётся выбранным до нажатия ＋
     switchExerciseMode(e.target.value === '__new__');
   });
   $('#btn-cancel-new').addEventListener('click', () => switchExerciseMode(false));
 
-  // заметка дня: создаём запись, только если есть текст или сама тренировка
+  // Кнопка переноса выбранной из выпадающего списка тренировки
+  $('#btn-copy-selected').addEventListener('click', () => {
+    const sourceIso = $('#copy-source-select').value;
+    if (sourceIso) copyWorkoutFrom(sourceIso);
+  });
+
   $('#day-note').addEventListener('input', e => {
     const v = e.target.value;
     if (state.workouts[selectedDate] || v.trim()) {
@@ -753,7 +1049,6 @@ function bindEvents() {
       setProgressPeriod(chip.dataset.months);
     });
   });
-  // ручная правка дат: снимаем выделение с быстрых кнопок
   for (const id of ['#progress-from', '#progress-to']) {
     $(id).addEventListener('change', () => {
       document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
@@ -761,7 +1056,7 @@ function bindEvents() {
     });
   }
 
-  // ----- настройки -----
+  // ----- настройки и бэкап -----
   $('#btn-settings').addEventListener('click', openSettingsModal);
   $('#settings-close').addEventListener('click', () => { $('#modal-settings').hidden = true; });
 
@@ -772,10 +1067,14 @@ function bindEvents() {
     alert('Список сохранён');
   });
 
-  $('#btn-backup-export').addEventListener('click', backupExport);
+  $('#btn-backup-copy').addEventListener('click', backupCopyClipboard);
+  $('#btn-backup-export').addEventListener('click', backupExportFile);
+  $('#btn-backup-paste-restore').addEventListener('click', () => {
+    restoreFromJsonString($('#backup-json-area').value);
+  });
   $('#btn-backup-import').addEventListener('click', () => $('#backup-file').click());
   $('#backup-file').addEventListener('change', e => {
-    if (e.target.files[0]) backupImport(e.target.files[0]);
+    if (e.target.files[0]) backupImportFile(e.target.files[0]);
     e.target.value = '';
   });
 
@@ -790,13 +1089,8 @@ function bindEvents() {
 }
 
 
-/* ---------- 9. PWA (офлайн-режим) ---------- */
+/* ---------- 9. PWA ---------- */
 
-// Service worker работает только на http(s). Если открыть файл
-// напрямую с телефона (file://) — приложение всё равно работает,
-// просто без установки иконки и офлайн-кэша.
-// window.Capacitor существует только внутри Android-приложения (APK) —
-// там офлайн обеспечивает сама оболочка, и service worker не нужен.
 if (!window.Capacitor && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(console.error);
@@ -809,4 +1103,4 @@ if (!window.Capacitor && 'serviceWorker' in navigator && location.protocol.start
 initCalendar();
 bindEvents();
 renderCalendar();
-setProgressPeriod(1); // страница прогресса по умолчанию показывает месяц
+setProgressPeriod(1);
