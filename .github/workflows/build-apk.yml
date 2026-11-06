@@ -6,7 +6,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# нужно для шага, который сохраняет ключ подписи в репозиторий
+# нужно для шага, который сохраняет ключ подписи и создает Релизы
 permissions:
   contents: write
 
@@ -102,3 +102,17 @@ jobs:
         with:
           name: GymLog-apk
           path: GymLog.apk
+
+      - name: Публикация релиза на GitHub
+        if: env.KEY_SAVED == ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ github.run_number }}"
+          name: "GymLog v${{ github.run_number }}"
+          body: |
+            Сборка #${{ github.run_number }}
+            Коммит: ${{ github.sha }}
+            Изменения: ${{ github.event.head_commit.message }}
+          files: GymLog.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
