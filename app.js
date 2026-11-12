@@ -228,8 +228,7 @@ function renderCopyBar() {
   const lastIso = getLastWorkoutBefore(selectedDate);
   const lastBtn = $('#btn-copy-last');
   if (lastIso) {
-    const exNames = state.workouts[lastIso].exercises.map(e => e.name).slice(0, 2).join(', ');
-    lastBtn.textContent = `⚡ Повторить прошлую (${formatDots(lastIso)}: ${exNames}…)`;
+    lastBtn.textContent = `⚡ Повторить прошлую`;
     lastBtn.onclick = () => copyWorkoutFrom(lastIso);
   }
 
@@ -369,6 +368,122 @@ function formatPrevSets(sets) {
   }).join(' • ');
 }
 
+/* ---------- Перетаскивание упражнений (Pointer Events + FLIP) ---------- */
+
+let activeDrag = null;
+
+function initCardDrag(handle, card) {
+  handle.addEventListener('pointerdown', e => {
+    if (activeDrag) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    const container = card.parentElement;
+    if (!container) return;
+    const cards = Array.from(container.querySelectorAll('.ex-card'));
+    const fromIndex = cards.indexOf(card);
+    if (fromIndex < 0 || cards.length < 2) return;
+
+    e.preventDefault();
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch (err) { /* старые WebView могут не поддерживать */ }
+    navigator.vibrate?.(25);
+
+    // FLIP: запоминаем исходные позиции и высоты всех карточек
+    const rects = cards.map(c => c.getBoundingClientRect());
+    const gap = parseFloat(getComputedStyle(container).rowGap) || 0;
+
+    const drag = {
+      pointerId: e.pointerId,
+      fromIndex,
+      toIndex: fromIndex,
+      startY: e.clientY,
+    };
+    activeDrag = drag;
+
+    cards.forEach(c => {
+      c.style.transition = '';
+      c.style.transform = '';
+    });
+    card.classList.add('is-dragging');
+    card.style.transition = 'none';
+    card.style.transform = 'translateY(0) scale(1.02)';
+
+    function cleanup() {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      handle.removeEventListener('lostpointercapture', onUp);
+
+      cards.forEach(c => {
+        c.style.transition = '';
+        c.style.transform = '';
+        c.classList.remove('is-dragging');
+      });
+    }
+
+    function onMove(ev) {
+      if (ev.pointerId !== drag.pointerId) return;
+      ev.preventDefault();
+
+      const deltaY = ev.clientY - drag.startY;
+      card.style.transform = `translateY(${deltaY}px) scale(1.02)`;
+
+      const ownRect = rects[fromIndex];
+      const centerY = ownRect.top + ownRect.height / 2 + deltaY;
+      let toIndex = 0;
+      cards.forEach((c, i) => {
+        if (i === fromIndex) return;
+        const r = rects[i];
+        if (centerY > r.top + r.height / 2) toIndex++;
+      });
+
+      if (toIndex === drag.toIndex) return;
+      drag.toIndex = toIndex;
+
+      // Освобождаем/занимаем место: соседние карточки едут на высоту драга + gap
+      const step = ownRect.height + gap;
+      cards.forEach((c, i) => {
+        if (i === fromIndex) return;
+        let shift = 0;
+        if (fromIndex < drag.toIndex && i > fromIndex && i <= drag.toIndex) {
+          shift = -step;
+        } else if (fromIndex > drag.toIndex && i >= drag.toIndex && i < fromIndex) {
+          shift = step;
+        }
+        c.style.transition = 'transform 200ms cubic-bezier(0.2, 0, 0, 1)';
+        c.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    }
+
+    function onUp(ev) {
+      if (ev.pointerId !== drag.pointerId || activeDrag !== drag) return;
+      activeDrag = null;
+
+      cleanup();
+      try {
+        if (handle.hasPointerCapture(ev.pointerId)) {
+          handle.releasePointerCapture(ev.pointerId);
+        }
+      } catch (err) { /* ignore */ }
+
+      if (ev.type !== 'pointerup' || drag.fromIndex === drag.toIndex) return;
+
+      const exercises = state.workouts[selectedDate]?.exercises;
+      if (!Array.isArray(exercises)) return;
+      const [moved] = exercises.splice(drag.fromIndex, 1);
+      exercises.splice(drag.toIndex, 0, moved);
+      saveState();
+      renderDay();
+    }
+
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+    handle.addEventListener('lostpointercapture', onUp);
+  });
+}
+
 function buildExerciseCard(ex, exIndex) {
   const card = document.createElement('div');
   card.className = 'ex-card';
@@ -425,8 +540,14 @@ function buildExerciseCard(ex, exIndex) {
     renderCalendar();
   });
 
-  head.append(nameSelect, nameInput, cancelRenameBtn, delEx);
+  const dragHandle = document.createElement('span');
+  dragHandle.className = 'drag-handle';
+  dragHandle.title = 'Перетащить';
+  dragHandle.textContent = '⋮⋮';
+
+  head.append(dragHandle, nameSelect, nameInput, cancelRenameBtn, delEx);
   card.appendChild(head);
+  initCardDrag(dragHandle, card);
 
   // --- Блок подсказки прошлого результата ---
   const prevHint = document.createElement('div');
@@ -460,6 +581,7 @@ function buildExerciseCard(ex, exIndex) {
     ex.name = nameSelect.value;
     saveState();
     updatePrevHint();
+    updateCardRecordHighlight(card, ex);
   });
 
   // Завершение ручного переименования
@@ -475,6 +597,7 @@ function buildExerciseCard(ex, exIndex) {
     }
     populateNameSelect();
     updatePrevHint();
+    updateCardRecordHighlight(card, ex);
     nameInput.hidden = true;
     cancelRenameBtn.hidden = true;
     nameSelect.hidden = false;
@@ -500,10 +623,26 @@ function buildExerciseCard(ex, exIndex) {
     '<span></span><span>RIR</span><span></span><span></span>';
   card.appendChild(setHead);
 
+  // --- Единственный лучший подход-рекорд в карточке ---
+  function updateCardRecordHighlight(card, ex) {
+    const recordIndex = findBestRecordSetIndex(ex, selectedDate);
+    card.querySelectorAll('.set-row').forEach((row, index) => {
+      const isRecord = index === recordIndex;
+      row.classList.toggle('is-record', isRecord);
+      const num = row.querySelector('.set-num');
+      if (!num) return;
+      num.textContent = isRecord ? '🔥' : index + 1;
+      num.title = isRecord ? 'Личный рекорд' : '';
+    });
+  }
+
   // --- Строки подходов ---
   ex.sets.forEach((set, setIndex) => {
-    card.appendChild(buildSetRow(ex, set, setIndex));
+    card.appendChild(buildSetRow(ex, set, setIndex, () => updateCardRecordHighlight(card, ex)));
   });
+
+  // Подсветка при отрисовке карточки (и после add/delete через renderDay)
+  updateCardRecordHighlight(card, ex);
 
   // --- Умная кнопка «+ подход» ---
   const addBtn = document.createElement('button');
@@ -554,6 +693,9 @@ function buildExerciseCard(ex, exIndex) {
     });
     saveState();
     renderDay();
+
+    // 2-й и последующие подходы — запускаем отдых 2 минуты
+    if (newIndex >= 1) startRestTimer(120);
   });
   card.appendChild(addBtn);
 
@@ -569,7 +711,68 @@ function stepValue(set, field, dir, input) {
   saveState();
 }
 
-function buildSetRow(ex, set, setIndex) {
+// Личный рекорд: индекс одного лучшего подхода текущей карточки,
+// если он превосходит исторический максимум до beforeIso
+function findBestRecordSetIndex(ex, beforeIso) {
+  const target = (ex.name || '').trim().toLowerCase();
+  if (!target) return -1;
+
+  let hasHistory = false;
+  let maxWeightBefore = -Infinity;
+  let maxRepsAtMaxWeightBefore = -Infinity;
+
+  for (const iso of Object.keys(state.workouts)) {
+    if (iso >= beforeIso) continue;
+    const workout = state.workouts[iso];
+    if (!workout || !workout.exercises) continue;
+
+    for (const pastEx of workout.exercises) {
+      if ((pastEx.name || '').trim().toLowerCase() !== target) continue;
+      for (const s of (pastEx.sets || [])) {
+        if (s.weight === '' || s.weight === undefined) continue;
+        const weight = Number(s.weight);
+        if (!Number.isFinite(weight)) continue;
+        const reps = Number(s.reps) || 0;
+
+        hasHistory = true;
+        if (weight > maxWeightBefore) {
+          maxWeightBefore = weight;
+          maxRepsAtMaxWeightBefore = reps;
+        } else if (weight === maxWeightBefore && reps > maxRepsAtMaxWeightBefore) {
+          maxRepsAtMaxWeightBefore = reps;
+        }
+      }
+    }
+  }
+
+  if (!hasHistory) return -1;
+
+  let bestIndex = -1;
+  let bestWeight = -Infinity;
+  let bestReps = -Infinity;
+
+  (ex.sets || []).forEach((s, index) => {
+    if (s.weight === '' || s.weight === undefined) return;
+    const weight = Number(s.weight);
+    if (!Number.isFinite(weight)) return;
+    const reps = Number(s.reps) || 0;
+
+    // При полном равенстве остаётся первый по порядку подход
+    if (weight > bestWeight || (weight === bestWeight && reps > bestReps)) {
+      bestWeight = weight;
+      bestReps = reps;
+      bestIndex = index;
+    }
+  });
+
+  if (bestIndex === -1) return -1;
+
+  const isRecord = bestWeight > maxWeightBefore ||
+    (bestWeight === maxWeightBefore && bestReps > maxRepsAtMaxWeightBefore);
+  return isRecord ? bestIndex : -1;
+}
+
+function buildSetRow(ex, set, setIndex, onChange) {
   const row = document.createElement('div');
   row.className = 'set-row';
 
@@ -577,6 +780,10 @@ function buildSetRow(ex, set, setIndex) {
   num.className = 'set-num';
   num.textContent = setIndex + 1;
   row.appendChild(num);
+
+  function notifyChange() {
+    if (onChange) onChange();
+  }
 
   for (const field of SET_FIELDS) {
     const minus = document.createElement('button');
@@ -595,12 +802,19 @@ function buildSetRow(ex, set, setIndex) {
     plus.className = 'step-btn';
     plus.textContent = '＋';
 
-    minus.addEventListener('click', () => stepValue(set, field, -1, input));
-    plus.addEventListener('click', () => stepValue(set, field, +1, input));
+    minus.addEventListener('click', () => {
+      stepValue(set, field, -1, input);
+      notifyChange();
+    });
+    plus.addEventListener('click', () => {
+      stepValue(set, field, +1, input);
+      notifyChange();
+    });
 
     input.addEventListener('input', () => {
       set[field.key] = input.value === '' ? '' : Number(input.value);
       saveState();
+      notifyChange();
     });
 
     row.append(minus, input, plus);
@@ -616,6 +830,68 @@ function buildSetRow(ex, set, setIndex) {
   });
   row.appendChild(del);
   return row;
+}
+
+
+/* ---------- 4.1. ТАЙМЕР ОТДЫХА ---------- */
+
+let restTimerId = null;
+let restTimerEndAt = 0;
+
+function formatRestTime(totalSeconds) {
+  const seconds = Math.max(0, Math.ceil(totalSeconds));
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function finishRestTimer() {
+  if (restTimerId) {
+    clearInterval(restTimerId);
+    restTimerId = null;
+  }
+  const bar = $('#rest-timer-bar');
+  $('#rest-timer-display').textContent = '00:00';
+  bar.classList.add('finished');
+  if (navigator.vibrate) navigator.vibrate([180, 80, 180, 80, 300]);
+}
+
+function startRestTimer(seconds) {
+  const bar = $('#rest-timer-bar');
+  bar.hidden = false;
+  bar.classList.remove('finished');
+  restTimerEndAt = Date.now() + seconds * 1000;
+  $('#rest-timer-display').textContent = formatRestTime(seconds);
+
+  if (restTimerId) clearInterval(restTimerId);
+  restTimerId = setInterval(() => {
+    const left = (restTimerEndAt - Date.now()) / 1000;
+    if (left <= 0) {
+      finishRestTimer();
+    } else {
+      $('#rest-timer-display').textContent = formatRestTime(left);
+    }
+  }, 250);
+}
+
+function addRestTime(seconds) {
+  if (restTimerId) {
+    restTimerEndAt += seconds * 1000;
+    $('#rest-timer-bar').classList.remove('finished');
+    $('#rest-timer-display').textContent =
+      formatRestTime((restTimerEndAt - Date.now()) / 1000);
+  } else {
+    startRestTimer(seconds);
+  }
+}
+
+function stopRestTimer() {
+  if (restTimerId) clearInterval(restTimerId);
+  restTimerId = null;
+  restTimerEndAt = 0;
+  const bar = $('#rest-timer-bar');
+  bar.hidden = true;
+  bar.classList.remove('finished');
 }
 
 
@@ -1575,6 +1851,13 @@ function bindEvents() {
       getWorkout(selectedDate).note = v;
       saveState();
     }
+  });
+
+  // ----- таймер отдыха -----
+  $('#rest-timer-close').addEventListener('click', stopRestTimer);
+  $('#rest-timer-plus').addEventListener('click', () => addRestTime(30));
+  document.querySelectorAll('.rest-preset').forEach(btn => {
+    btn.addEventListener('click', () => startRestTimer(Number(btn.dataset.rest)));
   });
 
   // ----- AI-тренер -----

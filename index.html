@@ -63,6 +63,18 @@
       Пока ничего нет. Добавь упражнение ниже или перенеси прошлую тренировку 👆
     </p>
 
+    <div id="rest-timer-bar" class="rest-timer" hidden>
+      <span class="rest-timer-icon">⏱</span>
+      <span id="rest-timer-display" class="rest-timer-display">02:00</span>
+      <div class="rest-timer-presets">
+        <button type="button" class="rest-preset" data-rest="90">1:30</button>
+        <button type="button" class="rest-preset" data-rest="120">2:00</button>
+        <button type="button" class="rest-preset" data-rest="180">3:00</button>
+        <button id="rest-timer-plus" class="rest-plus" type="button">+30с</button>
+      </div>
+      <button id="rest-timer-close" class="icon-btn" type="button" title="Закрыть таймер">✕</button>
+    </div>
+
     <div class="note-box">
       <label for="day-note">📝 Заметка к дню (попадёт в экспорт)</label>
       <textarea id="day-note" rows="2" placeholder="Самочувствие, схема, ошибки техники…"></textarea>
