@@ -29,7 +29,7 @@ jobs:
           java-version: 21
 
       - name: Установка Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem @capacitor/share
 
       - name: Копирование сайта в www/
         run: |
@@ -45,6 +45,12 @@ jobs:
 
       - name: Генерация Android-проекта
         run: npx cap add android && npx cap sync android
+
+      - name: Повышение версии APK
+        run: |
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
+          grep -E 'version(Code|Name)' android/app/build.gradle
 
       # известная проблема: старые kotlin-stdlib-jdk7/jdk8 дублируют классы
       # из новой kotlin-stdlib (1.8+) — исключаем старые модули

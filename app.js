@@ -965,8 +965,36 @@ function collectExportDates() {
   return dates;
 }
 
-// Умное сохранение файла: Web Share API для APK/телефона + fallback на скачивание или буфер
+// Умное сохранение файла: нативные плагины Capacitor, Web Share API, fallback на скачивание
 async function shareOrDownloadFile(filename, text, mime) {
+  // 0. В APK используем нативные Filesystem + Share: Web Share для файлов в WebView не работает
+  const capPlugins = window.Capacitor?.Plugins;
+  const nativeFilesystem = capPlugins?.Filesystem;
+  const nativeShare = capPlugins?.Share;
+
+  if (nativeFilesystem && nativeShare) {
+    try {
+      const saved = await nativeFilesystem.writeFile({
+        path: filename,
+        data: text,
+        directory: 'CACHE',
+        encoding: 'utf8'
+      });
+      await nativeShare.share({
+        title: filename,
+        url: saved.uri,
+        dialogTitle: 'Отправить файл'
+      });
+      return;
+    } catch (err) {
+      const message = String(err?.message || err || '');
+      if (err?.name === 'AbortError' || /share canceled/i.test(message)) {
+        return; // пользователь закрыл системную шторку
+      }
+      console.warn('Нативный шаринг не сработал, пробуем Web Share:', err);
+    }
+  }
+
   // 1. Пробуем системное меню «Поделиться файлом» (отлично работает на Android)
   try {
     if (navigator.canShare && typeof File !== 'undefined') {
