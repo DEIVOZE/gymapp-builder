@@ -260,6 +260,7 @@ function renderDay() {
 
   $('#day-note').value = workout ? (workout.note || '') : '';
   refreshExercisePicker();
+  updateAiReviewButton();
 
   if (isEmpty) return;
   workout.exercises.forEach((ex, i) => {
@@ -849,6 +850,549 @@ function backupImportFile(file) {
 }
 
 
+/* ---------- 6.1. AI-ТРЕНЕР (OpenAI-совместимый API) ---------- */
+
+const AI_CFG_KEY = 'gymlog_ai_cfg';
+
+// Резервный промпт, если prompt.md не удалось загрузить (например, file://)
+const SYSTEM_PROMPT_FALLBACK =
+  'Ты опытный тренер по гипертрофии и силовым. Сравни сегодняшнюю тренировку ' +
+  'с предыдущей по каждому упражнению (вес, повторы, RIR). Дай краткий вердикт ' +
+  'без воды, где есть прогресс и где пора менять нагрузку. Отвечай списком, ' +
+  'максимум 1500 символов.';
+
+let cachedSystemPrompt = null;
+
+// Читаем prompt.md один раз за сессию; при ошибке используем fallback
+async function getSystemPrompt() {
+  if (cachedSystemPrompt !== null) return cachedSystemPrompt;
+  try {
+    const res = await fetch('./prompt.md');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = (await res.text()).trim();
+    if (!text) throw new Error('файл пуст');
+    cachedSystemPrompt = text;
+  } catch (e) {
+    console.warn('Не удалось загрузить prompt.md, использую резервный промпт:', e);
+    return SYSTEM_PROMPT_FALLBACK;
+  }
+  return cachedSystemPrompt;
+}
+
+// Резервный промпт для анализа периода
+const PERIOD_PROMPT_FALLBACK =
+  'Ты аналитик силовых тренировок. Оцени прогресс за период: регулярность, ' +
+  'рост, плато и откаты по упражнениям, объём и восстановление. Дай конкретный ' +
+  'план на следующий цикл. Пиши списком, без воды.';
+
+let cachedPeriodPrompt = null;
+
+async function getPeriodSystemPrompt() {
+  if (cachedPeriodPrompt !== null) return cachedPeriodPrompt;
+  try {
+    const res = await fetch('./prompt-period.md');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = (await res.text()).trim();
+    if (!text) throw new Error('файл пуст');
+    cachedPeriodPrompt = text;
+  } catch (e) {
+    console.warn('Не удалось загрузить prompt-period.md, использую резервный промпт:', e);
+    return PERIOD_PROMPT_FALLBACK;
+  }
+  return cachedPeriodPrompt;
+}
+
+// Настройки AI живут отдельно от тренировок: ключ не попадает в JSON-бэкап
+function loadAiConfig() {
+  try {
+    const raw = localStorage.getItem(AI_CFG_KEY);
+    if (raw) {
+      const cfg = JSON.parse(raw);
+      return {
+        baseUrl: typeof cfg.baseUrl === 'string' ? cfg.baseUrl : '',
+        apiKey: typeof cfg.apiKey === 'string' ? cfg.apiKey : '',
+        model: typeof cfg.model === 'string' ? cfg.model : ''
+      };
+    }
+  } catch (e) {
+    console.error('Не удалось прочитать настройки AI:', e);
+  }
+  return { baseUrl: '', apiKey: '', model: '' };
+}
+
+function saveAiConfig(cfg) {
+  try {
+    localStorage.setItem(AI_CFG_KEY, JSON.stringify(cfg));
+    return true;
+  } catch (e) {
+    console.error('Не удалось сохранить настройки AI:', e);
+    return false;
+  }
+}
+
+function fillAiConfigForm() {
+  const cfg = loadAiConfig();
+  $('#ai-base-url').value = cfg.baseUrl;
+  $('#ai-api-key').value = cfg.apiKey;
+  $('#ai-model').value = cfg.model;
+}
+
+// Компактный подход для экономии токенов: 80кг×10(RIR 1)
+function formatSetCompact(set) {
+  const w = set.weight !== '' && set.weight !== undefined ? `${set.weight}кг` : '—';
+  const r = set.reps !== '' && set.reps !== undefined ? set.reps : '—';
+  const rir = set.rir !== '' && set.rir !== undefined ? `(RIR ${set.rir})` : '';
+  return `${w}×${r}${rir}`;
+}
+
+// Минимальный контекст: только текущий день + одно ближайшее прошлое по упражнению
+function buildAiPayload() {
+  const workout = state.workouts[selectedDate];
+  const lines = [];
+
+  if (workout.note && workout.note.trim()) {
+    lines.push(`Заметка дня: ${workout.note.trim()}`);
+  }
+
+  lines.push(`Тренировка ${formatDots(selectedDate)}:`);
+  workout.exercises.forEach(ex => {
+    if (!ex.sets || ex.sets.length === 0) return;
+    const todaySets = ex.sets.map(formatSetCompact).join(', ');
+    const prev = findPreviousExerciseLog(ex.name, selectedDate);
+    const prevText = prev
+      ? `Пред. [${formatDots(prev.iso)}]: ${prev.sets.map(formatSetCompact).join(', ')}`
+      : 'Пред.: нет данных';
+    lines.push(`- ${ex.name}: ${todaySets}. ${prevText}`);
+  });
+
+  return lines.join('\n');
+}
+
+// Экранирование + компактный разбор Markdown → безопасный HTML
+function renderMarkdownToHtml(rawText) {
+  const escapeHtml = s => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  let text = escapeHtml(String(rawText || '')).replace(/\r\n?/g, '\n');
+
+  // Инлайн-код прячем, чтобы * и ** внутри него не превращались в разметку
+  const codes = [];
+  text = text.replace(/`([^`\n]+)`/g, (m, code) => {
+    codes.push(code);
+    return `\u0000CODE${codes.length - 1}\u0000`;
+  });
+
+  const inline = s => s
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+    .replace(/\u0000CODE(\d+)\u0000/g, (m, i) =>
+      `<code class="md-code">${codes[Number(i)]}</code>`);
+
+  const out = [];
+  let paragraph = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    out.push(`<p class="md-p">${paragraph.map(inline).join('<br>')}</p>`);
+    paragraph = [];
+  };
+
+  text.split('\n').forEach(rawLine => {
+    const line = rawLine.trim();
+
+    if (!line) {           // пустая строка = новый абзац
+      flushParagraph();
+      return;
+    }
+
+    const heading = line.match(/^#{1,3}\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      out.push(`<h4 class="md-h">${inline(heading[1])}</h4>`);
+      return;
+    }
+
+    const item = line.match(/^(?:[-*]|\d+\.)\s+(.*)$/);
+    if (item) {
+      flushParagraph();
+      out.push(`<div class="md-li">${inline(item[1])}</div>`);
+      return;
+    }
+
+    paragraph.push(line);
+  });
+  flushParagraph();
+
+  return out.join('');
+}
+
+// Кнопка на экране дня: «открыть готовый разбор» или «запросить новый»
+function updateAiReviewButton() {
+  const workout = state.workouts[selectedDate];
+  const btn = $('#btn-ai-review');
+  btn.textContent = workout && workout.aiReview
+    ? '📋 Открыть разбор тренировки'
+    : '🤖 Оценить тренировку';
+}
+
+function setAiReviewBodyText(text, isError) {
+  const body = $('#ai-review-body');
+  body.classList.toggle('error', !!isError);
+  body.textContent = text || '';
+}
+
+function renderAiReview(review) {
+  const body = $('#ai-review-body');
+  body.classList.remove('error');
+  body.innerHTML = renderMarkdownToHtml(review);
+}
+
+// Контекст открытой модалки: дневной разбор или анализ периода
+let aiReviewContext = 'day';
+let aiReviewPeriod = null;
+
+function setAiReviewContext(context, fromIso, toIso) {
+  aiReviewContext = context;
+  aiReviewPeriod = context === 'period' ? { fromIso, toIso } : null;
+  $('#ai-review-title').textContent =
+    context === 'period' ? 'Разбор периода' : 'Разбор тренера';
+}
+
+function openAiReviewModal() {
+  const workout = state.workouts[selectedDate];
+  if (!workout || !workout.aiReview) return;
+  setAiReviewContext('day');
+  renderAiReview(workout.aiReview);
+  $('#modal-ai-review').hidden = false;
+}
+
+function closeAiReviewModal() {
+  $('#modal-ai-review').hidden = true;
+}
+
+// 🗑 — удалить разбор из дня (иначе он снова появится при открытии дня)
+function deleteAiReview() {
+  const workout = state.workouts[selectedDate];
+  if (!workout || !workout.aiReview) {
+    closeAiReviewModal();
+    return;
+  }
+  if (!confirm('Удалить разбор тренера для этого дня?')) return;
+  delete workout.aiReview;
+  saveState();
+  closeAiReviewModal();
+  updateAiReviewButton();
+}
+
+async function requestWorkoutReview() {
+  const cfg = loadAiConfig();
+  const baseUrl = (cfg.baseUrl || '').trim();
+  const apiKey = (cfg.apiKey || '').trim();
+  const model = (cfg.model || '').trim();
+
+  if (!baseUrl || !apiKey || !model) {
+    alert('Сначала заполни настройки AI: Base URL, API Key и модель.');
+    openSettingsModal();
+    return;
+  }
+
+  const workout = state.workouts[selectedDate];
+  const hasSets = workout && Array.isArray(workout.exercises) &&
+    workout.exercises.some(ex => ex.sets && ex.sets.length > 0);
+  if (!hasSets) {
+    alert('В этом дне пока нет упражнений с подходами — нечего оценивать.');
+    return;
+  }
+
+  const btn = $('#btn-ai-review');
+  const refreshBtn = $('#ai-review-refresh');
+  if (btn.disabled) return;
+
+  btn.disabled = true;
+  refreshBtn.disabled = true;
+  btn.textContent = '⏳ Анализирую...';
+  setAiReviewContext('day');
+  $('#modal-ai-review').hidden = false;
+  setAiReviewBodyText('⏳ Анализирую тренировку…', false);
+
+  try {
+    const systemPrompt = await getSystemPrompt();
+    const cleanUrl = baseUrl.replace(/\/+$/, '');
+    const res = await fetch(`${cleanUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: buildAiPayload() }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      setAiReviewBodyText(`Ошибка API (${res.status}):\n${errText}`.trim(), true);
+      return;
+    }
+
+    const data = await res.json();
+    const content = data && data.choices && data.choices[0] &&
+      data.choices[0].message && data.choices[0].message.content;
+
+    if (!content || !String(content).trim()) {
+      setAiReviewBodyText('API вернул пустой ответ. Попробуй другую модель или повтори запрос.', true);
+      return;
+    }
+
+    const review = String(content).trim();
+    getWorkout(selectedDate).aiReview = review;
+    saveState();
+    renderAiReview(review);
+    updateAiReviewButton();
+  } catch (e) {
+    setAiReviewBodyText(`Не удалось получить ответ от AI:\n${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    refreshBtn.disabled = false;
+    updateAiReviewButton();
+  }
+}
+
+
+/* ---------- 6.2. AI-РАЗБОР ПЕРИОДА ---------- */
+
+const AI_PERIOD_CACHE_KEY = 'gymlog_ai_period_cache';
+
+function loadPeriodAiCache() {
+  try {
+    const raw = localStorage.getItem(AI_PERIOD_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.error('Не удалось прочитать кэш AI-разборов периода:', e);
+    return {};
+  }
+}
+
+function getCachedPeriodReview(fromIso, toIso) {
+  const value = loadPeriodAiCache()[`${fromIso}_${toIso}`];
+  return typeof value === 'string' ? value : '';
+}
+
+function cachePeriodReview(fromIso, toIso, review) {
+  const cache = loadPeriodAiCache();
+  cache[`${fromIso}_${toIso}`] = review;
+  try {
+    localStorage.setItem(AI_PERIOD_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    console.error('Не удалось сохранить кэш AI-разбора периода:', e);
+  }
+}
+
+function dropPeriodReview(fromIso, toIso) {
+  const cache = loadPeriodAiCache();
+  delete cache[`${fromIso}_${toIso}`];
+  try {
+    localStorage.setItem(AI_PERIOD_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    console.error('Не удалось обновить кэш AI-разборов периода:', e);
+  }
+}
+
+// Компактная сводка периода: без сырых подходов за каждый день
+function buildPeriodAiPayload(fromIso, toIso) {
+  const dates = Object.keys(state.workouts)
+    .filter(iso => iso >= fromIso && iso <= toIso)
+    .sort()
+    .filter(iso => {
+      const w = state.workouts[iso];
+      return w && Array.isArray(w.exercises) &&
+        w.exercises.some(ex => ex.sets && ex.sets.length > 0);
+    });
+
+  if (dates.length < 2) {
+    alert('Для анализа периода нужно минимум 2 тренировки');
+    return null;
+  }
+
+  const lines = [
+    `Период: ${formatDots(fromIso)} — ${formatDots(toIso)}`,
+    `Тренировок: ${dates.length}`,
+    `Даты: ${dates.map(formatDots).join(', ')}`,
+    '',
+    'Упражнения:'
+  ];
+
+  const byEx = {};
+  const notes = [];
+
+  for (const iso of dates) {
+    const workout = state.workouts[iso];
+    if (workout.note && workout.note.trim()) {
+      notes.push(`[${formatDots(iso).slice(0, 5)}]: ${workout.note.trim()}`);
+    }
+    for (const ex of workout.exercises) {
+      if (!ex.sets || ex.sets.length === 0) continue;
+      if (!byEx[ex.name]) byEx[ex.name] = [];
+      byEx[ex.name].push({ iso, sets: ex.sets });
+    }
+  }
+
+  const fmtSets = sets => sets.map(formatSetCompact).join(', ');
+
+  Object.keys(byEx).sort().forEach(name => {
+    const occ = byEx[name];
+    const first = occ[0];
+    const last = occ[occ.length - 1];
+
+    let best = null;
+    for (const item of occ) {
+      const candidate = bestSet(item.sets);
+      if (!candidate) continue;
+      const w = Number(candidate.weight) || 0;
+      const r = Number(candidate.reps) || 0;
+      if (!best || w > best.w || (w === best.w && r > best.r)) {
+        best = { w, r, set: candidate };
+      }
+    }
+
+    lines.push(
+      `- ${name}: тренировок ${occ.length}; ` +
+      `первый [${formatDots(first.iso)}]: ${fmtSets(first.sets)}; ` +
+      `лучший: ${best ? formatSetCompact(best.set) : '—'}; ` +
+      `последний [${formatDots(last.iso)}]: ${fmtSets(last.sets)}`
+    );
+  });
+
+  if (notes.length) {
+    lines.push('', 'Заметки:');
+    notes.forEach(note => lines.push(`- ${note}`));
+  }
+
+  return lines.join('\n');
+}
+
+function openPeriodAiReviewModal(review, fromIso, toIso) {
+  setAiReviewContext('period', fromIso, toIso);
+  renderAiReview(review);
+  $('#modal-ai-review').hidden = false;
+}
+
+async function requestPeriodReview(force) {
+  const cfg = loadAiConfig();
+  const baseUrl = (cfg.baseUrl || '').trim();
+  const apiKey = (cfg.apiKey || '').trim();
+  const model = (cfg.model || '').trim();
+
+  if (!baseUrl || !apiKey || !model) {
+    alert('Сначала заполни настройки AI: Base URL, API Key и модель.');
+    openSettingsModal();
+    return;
+  }
+
+  let from = $('#progress-from').value;
+  let to = $('#progress-to').value;
+  if (!from || !to) {
+    alert('Выбери обе даты периода');
+    return;
+  }
+  if (from > to) [from, to] = [to, from];
+
+  if (!force) {
+    const cached = getCachedPeriodReview(from, to);
+    if (cached) {
+      openPeriodAiReviewModal(cached, from, to);
+      return;
+    }
+  }
+
+  const payload = buildPeriodAiPayload(from, to);
+  if (!payload) return;
+
+  const btn = $('#btn-ai-period-review');
+  const refreshBtn = $('#ai-review-refresh');
+  if (btn.disabled) return;
+
+  const btnText = btn.textContent;
+  btn.disabled = true;
+  refreshBtn.disabled = true;
+  btn.textContent = '⏳ Анализирую...';
+  setAiReviewContext('period', from, to);
+  $('#modal-ai-review').hidden = false;
+  setAiReviewBodyText('⏳ Анализирую прогресс за период…', false);
+
+  try {
+    const systemPrompt = await getPeriodSystemPrompt();
+    const cleanUrl = baseUrl.replace(/\/+$/, '');
+    const res = await fetch(`${cleanUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: payload }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      setAiReviewBodyText(`Ошибка API (${res.status}):\n${errText}`.trim(), true);
+      return;
+    }
+
+    const data = await res.json();
+    const content = data && data.choices && data.choices[0] &&
+      data.choices[0].message && data.choices[0].message.content;
+
+    if (!content || !String(content).trim()) {
+      setAiReviewBodyText('API вернул пустой ответ. Попробуй другую модель или повтори запрос.', true);
+      return;
+    }
+
+    const review = String(content).trim();
+    cachePeriodReview(from, to, review);
+    renderAiReview(review);
+  } catch (e) {
+    setAiReviewBodyText(`Не удалось получить ответ от AI:\n${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    refreshBtn.disabled = false;
+    btn.textContent = btnText;
+  }
+}
+
+function refreshCurrentAiReview() {
+  if (aiReviewContext === 'period' && aiReviewPeriod) {
+    requestPeriodReview(true);
+  } else {
+    requestWorkoutReview();
+  }
+}
+
+function deleteCurrentAiReview() {
+  if (aiReviewContext === 'period' && aiReviewPeriod) {
+    if (!confirm('Удалить разбор прогресса за этот период?')) return;
+    dropPeriodReview(aiReviewPeriod.fromIso, aiReviewPeriod.toIso);
+    closeAiReviewModal();
+    return;
+  }
+  deleteAiReview();
+}
+
+
 /* ---------- 7. ПРОГРЕСС ---------- */
 
 function bestSet(sets) {
@@ -984,6 +1528,7 @@ function openExportModal(presetDay) {
 function openSettingsModal() {
   $('#ex-list-editor').value = state.exercises.join('\n');
   $('#backup-json-area').value = '';
+  fillAiConfigForm();
   $('#modal-settings').hidden = false;
 }
 
@@ -1032,6 +1577,30 @@ function bindEvents() {
     }
   });
 
+  // ----- AI-тренер -----
+  $('#btn-ai-review').addEventListener('click', () => {
+    const workout = state.workouts[selectedDate];
+    if (workout && workout.aiReview) openAiReviewModal();
+    else requestWorkoutReview();
+  });
+  $('#ai-review-refresh').addEventListener('click', refreshCurrentAiReview);
+  $('#ai-review-delete').addEventListener('click', deleteCurrentAiReview);
+  $('#ai-review-close').addEventListener('click', closeAiReviewModal);
+
+  $('#btn-save-ai').addEventListener('click', () => {
+    const cfg = {
+      baseUrl: $('#ai-base-url').value.trim(),
+      apiKey: $('#ai-api-key').value.trim(),
+      model: $('#ai-model').value.trim()
+    };
+    if (!saveAiConfig(cfg)) {
+      alert('Не удалось сохранить настройки AI.');
+      return;
+    }
+    $('#ai-api-key').value = cfg.apiKey;
+    alert('Настройки AI сохранены ✔');
+  });
+
   // ----- экспорт -----
   $('#btn-export').addEventListener('click', () => openExportModal(false));
   $('#btn-export-day').addEventListener('click', () => openExportModal(true));
@@ -1055,6 +1624,8 @@ function bindEvents() {
       renderProgress();
     });
   }
+
+  $('#btn-ai-period-review').addEventListener('click', () => requestPeriodReview(false));
 
   // ----- настройки и бэкап -----
   $('#btn-settings').addEventListener('click', openSettingsModal);

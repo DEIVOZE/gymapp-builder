@@ -7,16 +7,18 @@
    - при каждом запросе: сначала пробуем сеть, если её нет
      — отдаём из кэша. Так обновления сайта не залипают.
    Когда поменяешь код приложения — увеличь число в CACHE
-   ('gymlog-v1' -> 'gymlog-v2'), и кэш обновится сам.
+   ('gymlog-v7' -> 'gymlog-v8'), и кэш обновится сам.
    ===================================================== */
 
-const CACHE = 'gymlog-v2';
+const CACHE = 'gymlog-v7';
 
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './prompt.md',
+  './prompt-period.md',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

@@ -34,7 +34,7 @@ jobs:
       - name: Копирование сайта в www/
         run: |
           mkdir -p www
-          cp index.html style.css app.js manifest.webmanifest sw.js www/
+          cp index.html style.css app.js prompt.md prompt-period.md manifest.webmanifest sw.js www/
           cp -r icons www/icons
 
       - name: Генерация иконок и splash для Android

@@ -68,6 +68,8 @@
       <textarea id="day-note" rows="2" placeholder="Самочувствие, схема, ошибки техники…"></textarea>
     </div>
 
+    <button id="btn-ai-review" class="btn-ai-review" type="button">🤖 Оценить тренировку</button>
+
     <div class="add-ex">
       <select id="ex-select"></select>
       <input id="new-ex-name" placeholder="Название упражнения" autocomplete="off" hidden>
@@ -96,6 +98,8 @@
       <span>—</span>
       <input type="date" id="progress-to" class="modal-input">
     </div>
+
+    <button id="btn-ai-period-review" class="btn-ai-review" type="button">📊 Оценить прогресс за период</button>
 
     <p id="progress-summary" class="hint"></p>
     <div id="progress-list"></div>
@@ -147,6 +151,27 @@
 
       <hr>
 
+      <p class="modal-label">AI-тренер (OpenAI-совместимый API)</p>
+      <label class="ai-field">
+        <span>API Base URL</span>
+        <input id="ai-base-url" class="modal-input" type="url" autocomplete="off" spellcheck="false"
+               placeholder="https://generativelanguage.googleapis.com/v1beta/openai">
+      </label>
+      <label class="ai-field">
+        <span>API Key</span>
+        <input id="ai-api-key" class="modal-input" type="password" autocomplete="off"
+               placeholder="sk-... или AIza...">
+      </label>
+      <label class="ai-field">
+        <span>Модель</span>
+        <input id="ai-model" class="modal-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="gemini-2.5-flash или deepseek/deepseek-chat">
+      </label>
+      <button id="btn-save-ai" class="btn-secondary">💾 Сохранить настройки AI</button>
+      <p class="ai-hint">Ключ хранится только на этом устройстве и не попадает в экспорт тренировок.</p>
+
+      <hr>
+
       <p class="modal-label">Резервная копия (JSON):</p>
       <div class="backup-grid">
         <button id="btn-backup-copy" class="btn-secondary">📋 Скопировать JSON</button>
@@ -169,6 +194,21 @@
       <div class="modal-actions">
         <button id="settings-close" class="btn-primary">Закрыть</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ================= МОДАЛКА AI-РАЗБОРА ================= -->
+  <div id="modal-ai-review" class="modal-backdrop" hidden>
+    <div class="modal modal-card">
+      <div class="ai-review-head">
+        <h3 id="ai-review-title">Разбор тренера</h3>
+        <div class="ai-review-actions">
+          <button id="ai-review-refresh" class="icon-btn" type="button" title="Перегенерировать">🔄</button>
+          <button id="ai-review-delete" class="icon-btn" type="button" title="Удалить разбор">🗑</button>
+          <button id="ai-review-close" class="icon-btn" type="button" title="Закрыть">✕</button>
+        </div>
+      </div>
+      <div id="ai-review-body" class="ai-review-body"></div>
     </div>
   </div>
 
