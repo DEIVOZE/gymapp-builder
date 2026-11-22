@@ -48,6 +48,8 @@
       <button id="btn-export-day" class="icon-btn" title="Экспорт дня в текстовый файл">📤</button>
     </header>
 
+    <div id="day-duration" class="day-duration" hidden></div>
+
     <!-- Блок быстрого переноса прошлой тренировки -->
     <div id="copy-workout-bar" class="copy-bar" hidden>
       <button id="btn-copy-last" class="btn-copy-last">⚡ Повторить прошлую</button>
@@ -156,6 +158,13 @@
   <div id="modal-settings" class="modal-backdrop" hidden>
     <div class="modal">
       <h3>Настройки</h3>
+
+      <label class="checkbox-row" for="setting-rest-timer-enabled">
+        <input type="checkbox" id="setting-rest-timer-enabled" checked>
+        <span>Автозапуск таймера отдыха между подходами</span>
+      </label>
+
+      <hr>
 
       <p class="modal-label">Мой список упражнений (по одному в строке):</p>
       <textarea id="ex-list-editor" rows="5" spellcheck="false"></textarea>

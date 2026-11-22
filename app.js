@@ -258,6 +258,7 @@ function renderDay() {
   $('#day-empty').hidden = !isEmpty;
 
   $('#day-note').value = workout ? (workout.note || '') : '';
+  updateWorkoutDurationDisplay();
   refreshExercisePicker();
   updateAiReviewButton();
 
@@ -691,11 +692,13 @@ function buildExerciseCard(ex, exIndex) {
       reps: nextReps,
       rir: nextRir,
     });
+    touchWorkoutActivity(selectedDate);
     saveState();
     renderDay();
 
-    // 2-й и последующие подходы — запускаем отдых 2 минуты
-    if (newIndex >= 1) startRestTimer(120);
+    // 2-й и последующие подходы — запускаем отдых 2 минуты,
+    // если в настройках не отключён автозапуск таймера
+    if (newIndex >= 1 && isRestTimerEnabled()) startRestTimer(120);
   });
   card.appendChild(addBtn);
 
@@ -804,15 +807,18 @@ function buildSetRow(ex, set, setIndex, onChange) {
 
     minus.addEventListener('click', () => {
       stepValue(set, field, -1, input);
+      touchWorkoutActivity(selectedDate);
       notifyChange();
     });
     plus.addEventListener('click', () => {
       stepValue(set, field, +1, input);
+      touchWorkoutActivity(selectedDate);
       notifyChange();
     });
 
     input.addEventListener('input', () => {
       set[field.key] = input.value === '' ? '' : Number(input.value);
+      touchWorkoutActivity(selectedDate);
       saveState();
       notifyChange();
     });
@@ -835,8 +841,27 @@ function buildSetRow(ex, set, setIndex, onChange) {
 
 /* ---------- 4.1. ТАЙМЕР ОТДЫХА ---------- */
 
+const REST_TIMER_SETTING_KEY = 'gymlog_rest_timer_enabled';
+
 let restTimerId = null;
 let restTimerEndAt = 0;
+
+// По умолчанию автозапуск таймера включён
+function isRestTimerEnabled() {
+  try {
+    return localStorage.getItem(REST_TIMER_SETTING_KEY) !== '0';
+  } catch (e) {
+    return true;
+  }
+}
+
+function saveRestTimerEnabled(enabled) {
+  try {
+    localStorage.setItem(REST_TIMER_SETTING_KEY, enabled ? '1' : '0');
+  } catch (e) {
+    console.error('Не удалось сохранить настройку таймера отдыха:', e);
+  }
+}
 
 function formatRestTime(totalSeconds) {
   const seconds = Math.max(0, Math.ceil(totalSeconds));
@@ -895,6 +920,66 @@ function stopRestTimer() {
 }
 
 
+/* ---------- 4.2. ПРИМЕРНАЯ ДЛИТЕЛЬНОСТЬ ТРЕНИРОВКИ ---------- */
+
+const WORKOUT_IDLE_GAP_MS = 4 * 3600 * 1000; // 4 часа без действий — не продлеваем тренировку
+const MIN_VISIBLE_DURATION_MINS = 3;
+
+// Возвращает длительность тренировки в минутах или null, если данных нет
+function getWorkoutDurationMins(workout) {
+  if (!workout || !workout.startedAt || !workout.finishedAt) return null;
+  if (workout.finishedAt <= workout.startedAt) return null;
+  return Math.round((workout.finishedAt - workout.startedAt) / 60000);
+}
+
+// Длительность в формате «~54 мин» / «~1 ч 12 мин», либо '' если она ещё не фиксируется
+function formatWorkoutDuration(mins) {
+  if (mins === null || mins === undefined || mins < MIN_VISIBLE_DURATION_MINS) return '';
+  if (mins < 60) return `~${mins} мин`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `~${h} ч` : `~${h} ч ${m} мин`;
+}
+
+// Фиксируем время первого и последнего реального действия с подходами.
+// Работает только для сегодняшнего дня, чтобы просмотр старых тренировок не портил их длительность.
+function touchWorkoutActivity(iso) {
+  if (iso !== todayISO()) return;
+
+  const workout = getWorkout(iso);
+  const now = Date.now();
+
+  if (!workout.startedAt) {
+    workout.startedAt = now;
+  }
+
+  // После долгой паузы (например, вечером после утренней тренировки) не продлеваем finishedAt
+  if (workout.finishedAt && now - workout.finishedAt > WORKOUT_IDLE_GAP_MS) {
+    // оставляем завершение как есть
+  } else {
+    workout.finishedAt = now;
+  }
+
+  saveState();
+  updateWorkoutDurationDisplay();
+}
+
+function updateWorkoutDurationDisplay() {
+  const badge = $('#day-duration');
+  if (!badge) return;
+
+  const mins = getWorkoutDurationMins(state.workouts[selectedDate]);
+  const text = formatWorkoutDuration(mins);
+  if (!text) {
+    badge.hidden = true;
+    return;
+  }
+
+  badge.textContent = `⏱ ${text}`;
+  badge.hidden = false;
+}
+
+
 /* ---------- 5. ЭКСПОРТ И ФАЙЛЫ (С ПОДДЕРЖКОЙ ANDROID APK) ---------- */
 
 function buildExportText(dates) {
@@ -914,6 +999,10 @@ function buildExportText(dates) {
     workoutsCount++;
 
     lines.push(``, `═══ ${formatDateRu(iso)} ═══`);
+    const durationText = formatWorkoutDuration(getWorkoutDurationMins(workout));
+    if (durationText) {
+      lines.push(`Длительность: ${durationText}`);
+    }
     if (workout.note && workout.note.trim()) {
       lines.push(`📝 ${workout.note.trim()}`);
     }
@@ -1832,6 +1921,7 @@ function openExportModal(presetDay) {
 function openSettingsModal() {
   $('#ex-list-editor').value = state.exercises.join('\n');
   $('#backup-json-area').value = '';
+  $('#setting-rest-timer-enabled').checked = isRestTimerEnabled();
   fillAiConfigForm();
   $('#modal-settings').hidden = false;
 }
@@ -1941,6 +2031,13 @@ function bindEvents() {
   // ----- настройки и бэкап -----
   $('#btn-settings').addEventListener('click', openSettingsModal);
   $('#settings-close').addEventListener('click', () => { $('#modal-settings').hidden = true; });
+
+  // Автозапуск таймера отдыха: сохраняем сразу, работающий таймер останавливаем
+  $('#setting-rest-timer-enabled').addEventListener('change', e => {
+    const enabled = e.target.checked;
+    saveRestTimerEnabled(enabled);
+    if (!enabled) stopRestTimer();
+  });
 
   $('#btn-save-exlist').addEventListener('click', () => {
     state.exercises = $('#ex-list-editor').value
